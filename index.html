@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Decoder & Redirector</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: #1e293b;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        .status {
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+        .url {
+            word-break: break-all;
+            color: #38bdf8;
+            font-family: monospace;
+            background: #0f172a;
+            padding: 0.75rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+        }
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #38bdf8;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div id="loader" class="spinner"></div>
+    <div id="status" class="status">Parsing URL...</div>
+    <div id="decoded-url" class="url" style="display: none;"></div>
+</div>
+
+<script>
+// Lookup tables mirroring your CMD Batch script
+const MAP = {
+    // Upper (1-26)
+    'A': 1,  'B': 26, 'C': 2,  'D': 25, 'E': 3,  'F': 24, 'G': 4,  'H': 23,
+    'I': 5,  'J': 22, 'K': 6,  'L': 21, 'M': 7,  'N': 20, 'O': 8,  'P': 19,
+    'Q': 9,  'R': 18, 'S': 10, 'T': 17, 'U': 11, 'V': 16, 'W': 12, 'X': 15,
+    'Y': 13, 'Z': 14,
+    // Lower (27-52)
+    'a': 27, 'b': 52, 'c': 28, 'd': 51, 'e': 29, 'f': 50, 'g': 30, 'h': 49,
+    'i': 31, 'j': 48, 'k': 32, 'l': 47, 'm': 33, 'n': 46, 'o': 34, 'p': 45,
+    'q': 35, 'r': 44, 's': 36, 't': 43, 'u': 37, 'v': 42, 'w': 38, 'x': 41,
+    'y': 39, 'z': 40
+};
+
+// Reverse map (Value -> Character)
+const VAL = {};
+for (const [key, value] of Object.entries(MAP)) {
+    VAL[value] = key;
+}
+
+function decodeString(encoded) {
+    let result = '';
+    let i = 0;
+
+    while (i < encoded.length) {
+        let char = encoded[i];
+
+        // Check if digit
+        if (/\d/.test(char)) {
+            let numStr = '';
+            while (i < encoded.length && /\d/.test(encoded[i])) {
+                numStr += encoded[i];
+                i++;
+            }
+            // Math decoding: x = (y - 11) / 7
+            let origNum = Math.floor((parseInt(numStr, 10) - 11) / 7);
+            result += origNum;
+            continue;
+        }
+
+        // Check if mapped character
+        if (MAP.hasOwnProperty(char)) {
+            let rawVal = MAP[char];
+            let baseOffset = rawVal <= 26 ? 0 : 26;
+            let v = rawVal <= 26 ? rawVal : rawVal - 26;
+
+            // Decipher step: x = 15 * (y - 1 - 11) mod 26
+            let step1 = v - 1 - 11;
+            let step2 = (15 * step1) % 26;
+            if (step2 < 0) step2 += 26;
+            let calcVal = (step2 === 0) ? 26 : step2;
+
+            let finalVal = calcVal + baseOffset;
+            result += VAL[finalVal] || char;
+        } else {
+            // Keep untransformed symbols (e.g., :, /, ., ?)
+            result += char;
+        }
+        i++;
+    }
+
+    return result;
+}
+
+function processRedirect() {
+    // Read path from hash (#/encoded) or query parameter (?url=encoded)
+    let encodedPath = window.location.hash.replace(/^#\/?/, '');
+    
+    if (!encodedPath) {
+        const urlParams = new URLSearchParams(window.location.search);
+        encodedPath = urlParams.get('url') || '';
+    }
+
+    // Fallback: Check raw path if running on a server supporting fallback routing
+    if (!encodedPath && window.location.pathname.length > 1) {
+        encodedPath = window.location.pathname.substring(1);
+    }
+
+    const statusEl = document.getElementById('status');
+    const decodedEl = document.getElementById('decoded-url');
+    const loaderEl = document.getElementById('loader');
+
+    if (!encodedPath) {
+        loaderEl.style.display = 'none';
+        statusEl.textContent = 'No encoded URL provided.';
+        decodedEl.style.display = 'block';
+        decodedEl.textContent = 'Usage: add /#/[encoded_string] to the end of the URL.';
+        return;
+    }
+
+    const decoded = decodeString(decodeURIComponent(encodedPath));
+    
+    // Ensure standard web protocol is present
+    let targetUrl = decoded;
+    if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = 'https://' + targetUrl;
+    }
+
+    statusEl.textContent = 'Redirecting to:';
+    loaderEl.style.display = 'none';
+    decodedEl.style.display = 'block';
+    decodedEl.textContent = targetUrl;
+
+    // Execute redirect after 1 second preview
+    setTimeout(() => {
+        window.location.href = targetUrl;
+    }, 1000);
+}
+
+window.addEventListener('DOMContentLoaded', processRedirect);
+</script>
+
+</body>
+</html>
